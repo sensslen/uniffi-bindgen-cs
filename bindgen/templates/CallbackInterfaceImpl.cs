@@ -82,20 +82,16 @@ class {{ callback_impl_name }} {
             {%- endmatch %}
 
             ret.@callStatus.code = UniffiCallbackResponseStatus.SUCCESS;
+            } catch (System.OperationCanceledException) when (cts.IsCancellationRequested) {
+                // Future was dropped by Rust; do not invoke the completion callback.
+                return;
             {%- match meth.throws_type() %}
             {%- when Some with (error_type) %}
             } catch ({{ error_type|type_name(ci) }} e) {
                 ret.@callStatus.code = UniffiCallbackResponseStatus.ERROR;
                 ret.@callStatus.error_buf = {{ error_type|ffi_converter_name }}.INSTANCE.Lower(e);
-            } catch (System.Exception e){
-                ret.@callStatus.code = UniffiCallbackResponseStatus.UNEXPECTED_ERROR;
-                try {
-                    ret.@callStatus.error_buf = FfiConverterString.INSTANCE.Lower(e.Message);
-                }
-                catch {
-                }
-            }
             {%- when None %}
+            {%- endmatch %}
             } catch (System.Exception e){
                 ret.@callStatus.code = UniffiCallbackResponseStatus.UNEXPECTED_ERROR;
                 try {
@@ -104,8 +100,11 @@ class {{ callback_impl_name }} {
                 catch {
                 }
             }
-            {%- endmatch %}
 
+            // Guard against the race where Rust drops the future between the try/catch and the
+            // completion callback — uniffiCallbackData would be freed and calling cb would be
+            // a use-after-free.
+            if (!cts.IsCancellationRequested) {
             {% match meth.return_type() %}
             {%- when Some with (return_type) %}
             {%- let complete_fn_type = return_type|ffi_foreign_future_complete %}
@@ -114,6 +113,7 @@ class {{ callback_impl_name }} {
             var cb = Marshal.GetDelegateForFunctionPointer<_UniFFILib.UniffiForeignFutureCompleteVoid>(@uniffiFutureCallback);
             {%- endmatch %}
             cb(@uniffiCallbackData, ret);
+            }
         }, cts.Token);
 
         var foreignHandle = _UniFFIAsync._foreign_futures_map.Insert(cts);
