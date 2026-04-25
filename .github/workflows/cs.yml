@@ -24,20 +24,16 @@ jobs:
 
   test-bindings:
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/nordsecurity/uniffi-bindgen-cs-test-runner:v0.2.1
     steps:
     - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 # v4.1.6
       with:
         submodules: 'true'
+    - name: Build test runner image
+      run: docker build -t uniffi-bindgen-cs-test-runner .
     - name: Test bindings
-      shell: bash
-      env:
-        # Github sets HOME to /github/home and breaks dependencies in Docker image..
-        # https://github.com/actions/runner/issues/863
-        HOME: /root
       run: |
-        source ~/.bashrc
-        ./build.sh
-        ./generate_bindings.sh
-        ./test_bindings.sh
+        docker run --rm \
+          --volume $PWD:/mounted_workdir \
+          --workdir /mounted_workdir \
+          -e HOME=/root \
+          uniffi-bindgen-cs-test-runner bash -c "source ~/.bashrc && ./build.sh && ./generate_bindings.sh && ./test_bindings.sh"
