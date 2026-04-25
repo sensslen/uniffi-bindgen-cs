@@ -24,10 +24,7 @@ internal static class _UniFFIAsync {
             {
                 task.SetResult(pollResult);
             }
-            else 
-            {
-                throw new InternalException($"Unable to find continuation handle: {continuationHandle}");
-            }
+            // else: continuation already completed (e.g. waker called more than once), ignore
         }
     }
 
@@ -41,10 +38,7 @@ internal static class _UniFFIAsync {
             {
                 task.Cancel();
             }
-            else
-            {
-                throw new InternalException($"Unable to find cancellation token: {handle}");
-            }
+            // else: handle already removed, ignore
         }
     }
 
