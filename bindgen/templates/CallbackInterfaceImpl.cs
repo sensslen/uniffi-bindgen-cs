@@ -52,7 +52,8 @@ class {{ callback_impl_name }} {
         }
         CancellationTokenSource cts = new CancellationTokenSource();
 
-        Task.Run(async () => {
+        Task.Run(async () =>
+        {
             var ret = new _UniFFILib.{{ meth.foreign_future_ffi_result_struct().name()|ffi_struct_name }}();
             ret.@callStatus = new UniffiRustCallStatus();
 
@@ -114,7 +115,7 @@ class {{ callback_impl_name }} {
             var cb = Marshal.GetDelegateForFunctionPointer<_UniFFILib.UniffiForeignFutureCompleteVoid>(@uniffiFutureCallback);
             {%- endmatch %}
             cb(@uniffiCallbackData, ret);
-        }, cts.Token);
+        });
 
         var foreignHandle = _UniFFIAsync._foreign_futures_map.Insert(cts);
         unsafe {
