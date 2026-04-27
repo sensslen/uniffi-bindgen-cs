@@ -128,11 +128,19 @@ class {{ callback_impl_name }} {
         {{ ffi_converter_var }}.handleMap.Remove(@handle);
     }
 
+    static ulong UniffiClone(ulong @handle) {
+        if (!{{ ffi_converter_var }}.handleMap.TryGet(@handle, out var uniffiObject)) {
+            throw new InternalException($"No callback in handlemap '{@handle}'");
+        }
+        return {{ ffi_converter_var }}.handleMap.Insert(uniffiObject!);
+    }
+
     {%- for (ffi_callback, meth) in vtable_methods.iter() %}
     {%- let fn_type = format!("_UniFFILib.{}Method", callback_impl_name) %}
     static {{ fn_type }}{{ loop.index0 }} _m{{ loop.index0 }} = new {{ fn_type }}{{ loop.index0 }}({{ meth.name()|fn_name }});
     {%- endfor %}
     static _UniFFILib.UniffiCallbackInterfaceFree _callback_interface_free = new _UniFFILib.UniffiCallbackInterfaceFree(UniffiFree);
+    static _UniFFILib.UniffiCallbackInterfaceClone _callback_interface_clone = new _UniFFILib.UniffiCallbackInterfaceClone(UniffiClone);
 
     public static void Register() {
         _UniFFILib.{{ vtable|ffi_type_name }} _vtable = new _UniFFILib.{{ vtable|ffi_type_name }} {
@@ -140,6 +148,7 @@ class {{ callback_impl_name }} {
             {%- let fn_type = format!("_UniFFILib.{}Method", callback_impl_name) %}
             {{ meth.name()|var_name() }} = Marshal.GetFunctionPointerForDelegate(_m{{ loop.index0 }}),
             {%- endfor %}
+            @uniffiClone = Marshal.GetFunctionPointerForDelegate(_callback_interface_clone),
             @uniffiFree = Marshal.GetFunctionPointerForDelegate(_callback_interface_free)
         };
 
