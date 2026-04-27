@@ -14,10 +14,10 @@ public class TestTraits
     [Fact]
     public void TraitsWorking()
     {
+        string[] validNames = ["go", "stop"];
         foreach (var button in TraitsMethods.GetButtons())
         {
             var name = button.Name();
-            string[] validNames = ["go", "stop"];
             Assert.Contains(name, validNames);
             Assert.Equal(TraitsMethods.Press(button).Name(), name);
         }

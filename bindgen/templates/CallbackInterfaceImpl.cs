@@ -51,6 +51,12 @@ class {{ callback_impl_name }} {
             throw new InternalException($"No callback in handlemap '{handle}'");
         }
         var futureHandle = new UniffiForeignFutureHandle();
+        var foreignHandle = _UniFFIAsync._foreign_futures_map.Insert(futureHandle);
+
+        unsafe {
+            (*(_UniFFILib.UniffiForeignFutureDroppedCallbackStruct*)@uniffiOutDroppedCallback).handle = foreignHandle;
+            (*(_UniFFILib.UniffiForeignFutureDroppedCallbackStruct*)@uniffiOutDroppedCallback).free = Marshal.GetFunctionPointerForDelegate(_UniFFIAsync.UniffiForeignFutureDroppedCallbackImpl.callback);
+        }
 
         Task.Run(async () => {
             var ret = new _UniFFILib.{{ meth.foreign_future_ffi_result_struct().name()|ffi_struct_name }}();
@@ -115,12 +121,6 @@ class {{ callback_impl_name }} {
             cb(@uniffiCallbackData, ret);
             });
         }, futureHandle.Cts.Token);
-
-        var foreignHandle = _UniFFIAsync._foreign_futures_map.Insert(futureHandle);
-        unsafe {
-            (*(_UniFFILib.UniffiForeignFutureDroppedCallbackStruct*)@uniffiOutDroppedCallback).handle = foreignHandle;
-            (*(_UniFFILib.UniffiForeignFutureDroppedCallbackStruct*)@uniffiOutDroppedCallback).free = Marshal.GetFunctionPointerForDelegate(_UniFFIAsync.UniffiForeignFutureDroppedCallbackImpl.callback);
-        }
         {%- endif %}
     }
     {%- endfor %}

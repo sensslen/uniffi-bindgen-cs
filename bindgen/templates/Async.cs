@@ -13,7 +13,7 @@ delegate void UniFfiFutureCallback(IntPtr continuationHandle, byte pollResult);
 //     so cb() is never called with freed uniffiCallbackData.
 //   • if the completion fires first → the drop callback is blocked until cb() returns,
 //     so Rust cannot free uniffiCallbackData while cb() is still running.
-internal class UniffiForeignFutureHandle {
+internal sealed class UniffiForeignFutureHandle : System.IDisposable {
     internal CancellationTokenSource Cts { get; } = new CancellationTokenSource();
     #if NET9_0_OR_GREATER
     private readonly Lock _lock = new Lock();
@@ -40,6 +40,10 @@ internal class UniffiForeignFutureHandle {
             }
         }
     }
+    
+    public void Dispose() {
+        Cts.Dispose();
+    }
 }
 
 internal static class _UniFFIAsync {
@@ -47,7 +51,7 @@ internal static class _UniFFIAsync {
     // internal const byte UNIFFI_RUST_FUTURE_POLL_MAYBE_READY = 1;
 
     internal static ConcurrentHandleMap<TaskCompletionSource<byte>> _async_handle_map = new ConcurrentHandleMap<TaskCompletionSource<byte>>();
-    public static ConcurrentHandleMap<UniffiForeignFutureHandle> _foreign_futures_map = new ConcurrentHandleMap<UniffiForeignFutureHandle>();
+    internal static ConcurrentHandleMap<UniffiForeignFutureHandle> _foreign_futures_map = new ConcurrentHandleMap<UniffiForeignFutureHandle>();
 
     // FFI type for Rust future continuations
     internal class UniffiRustFutureContinuationCallback
@@ -73,6 +77,7 @@ internal static class _UniFFIAsync {
             if (_foreign_futures_map.Remove(handle, out UniffiForeignFutureHandle? futureHandle) && futureHandle is not null)
             {
                 futureHandle.MarkDropped();
+                futureHandle.Dispose();
             }
             // else: handle already removed, ignore
         }
