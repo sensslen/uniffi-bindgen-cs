@@ -96,8 +96,8 @@ class {{ callback_impl_name }} {
             } catch ({{ error_type|type_name(ci) }} e) {
                 ret.@callStatus.code = UniffiCallbackResponseStatus.ERROR;
                 ret.@callStatus.error_buf = {{ error_type|ffi_converter_name }}.INSTANCE.Lower(e);
-            }
             {%- when None %}
+            {%- endmatch %}
             } catch (System.Exception e){
                 ret.@callStatus.code = UniffiCallbackResponseStatus.UNEXPECTED_ERROR;
                 try {
@@ -106,7 +106,6 @@ class {{ callback_impl_name }} {
                 catch {
                 }
             }
-            {%- endmatch %}
 
             // Use TryInvokeCallback to hold the same lock that MarkDropped() acquires,
             // ensuring cb() cannot be called after Rust has freed uniffiCallbackData.
