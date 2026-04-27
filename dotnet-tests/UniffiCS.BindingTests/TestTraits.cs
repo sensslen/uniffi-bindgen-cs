@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using uniffi.traits;
 
 namespace UniffiCS.BindingTests;
@@ -15,10 +14,11 @@ public class TestTraits
     [Fact]
     public void TraitsWorking()
     {
+        string[] validNames = ["go", "stop"];
         foreach (var button in TraitsMethods.GetButtons())
         {
             var name = button.Name();
-            Assert.Contains(name, ["go", "stop"]);
+            Assert.Contains(name, validNames);
             Assert.Equal(TraitsMethods.Press(button).Name(), name);
         }
     }

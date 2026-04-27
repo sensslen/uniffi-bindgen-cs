@@ -6,12 +6,52 @@
 [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
 delegate void UniFfiFutureCallback(IntPtr continuationHandle, byte pollResult);
 
+// Holds per-foreign-future state: a CancellationTokenSource plus a lock that guards
+// whether the completion callback is safe to invoke.  Both the completion path and
+// the Rust drop-callback path acquire this lock, which guarantees that:
+//   • if the drop fires first  → _dropped is true when the completion path checks it,
+//     so cb() is never called with freed uniffiCallbackData.
+//   • if the completion fires first → the drop callback is blocked until cb() returns,
+//     so Rust cannot free uniffiCallbackData while cb() is still running.
+internal sealed class UniffiForeignFutureHandle : System.IDisposable {
+    internal CancellationTokenSource Cts { get; } = new CancellationTokenSource();
+    #if NET9_0_OR_GREATER
+    private readonly Lock _lock = new Lock();
+    #else
+    private readonly object _lock = new object();
+    #endif
+
+    // Called by the Rust drop callback.  Marks the future as dropped (preventing any
+    // concurrent completion invocation) and cancels the CancellationTokenSource.
+    // Blocks until any in-progress TryInvokeCallback has finished.
+    internal void MarkDropped() {
+        lock (_lock) {
+            Cts.Cancel();
+        }
+    }
+
+    // Invokes action only if Rust has not yet dropped this future.
+    // Holds the lock across the invocation so MarkDropped() cannot return (and thus
+    // cannot let Rust free uniffiCallbackData) until we are done.
+    internal void TryInvokeCallback(Action invoke) {
+        lock (_lock) {
+            if (!Cts.IsCancellationRequested) {
+                invoke();
+            }
+        }
+    }
+    
+    public void Dispose() {
+        Cts.Dispose();
+    }
+}
+
 internal static class _UniFFIAsync {
     internal const byte UNIFFI_RUST_FUTURE_POLL_READY = 0;
     // internal const byte UNIFFI_RUST_FUTURE_POLL_MAYBE_READY = 1;
 
     internal static ConcurrentHandleMap<TaskCompletionSource<byte>> _async_handle_map = new ConcurrentHandleMap<TaskCompletionSource<byte>>();
-    public static ConcurrentHandleMap<CancellationTokenSource> _foreign_futures_map = new ConcurrentHandleMap<CancellationTokenSource>();
+    internal static ConcurrentHandleMap<UniffiForeignFutureHandle> _foreign_futures_map = new ConcurrentHandleMap<UniffiForeignFutureHandle>();
 
     // FFI type for Rust future continuations
     internal class UniffiRustFutureContinuationCallback
@@ -20,14 +60,11 @@ internal static class _UniFFIAsync {
 
         public static void Callback(IntPtr continuationHandle, byte pollResult)
         {
-            if (_async_handle_map.Remove((ulong)continuationHandle.ToInt64(), out TaskCompletionSource<byte> task))
+            if (_async_handle_map.Remove((ulong)continuationHandle.ToInt64(), out TaskCompletionSource<byte>? task) && task is not null)
             {
                 task.SetResult(pollResult);
             }
-            else 
-            {
-                throw new InternalException($"Unable to find continuation handle: {continuationHandle}");
-            }
+            // else: continuation already completed (e.g. waker called more than once), ignore
         }
     }
 
@@ -37,14 +74,12 @@ internal static class _UniFFIAsync {
 
         public static void Callback(ulong handle)
         {
-            if (_foreign_futures_map.Remove(handle, out CancellationTokenSource task))
+            if (_foreign_futures_map.Remove(handle, out UniffiForeignFutureHandle? futureHandle) && futureHandle is not null)
             {
-                task.Cancel();
+                futureHandle.MarkDropped();
+                futureHandle.Dispose();
             }
-            else
-            {
-                throw new InternalException($"Unable to find cancellation token: {handle}");
-            }
+            // else: handle already removed, ignore
         }
     }
 

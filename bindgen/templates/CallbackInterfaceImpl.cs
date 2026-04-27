@@ -50,7 +50,13 @@ class {{ callback_impl_name }} {
         if (!{{ ffi_converter_var }}.handleMap.TryGet(handle, out var uniffiObject)) {
             throw new InternalException($"No callback in handlemap '{handle}'");
         }
-        CancellationTokenSource cts = new CancellationTokenSource();
+        var futureHandle = new UniffiForeignFutureHandle();
+        var foreignHandle = _UniFFIAsync._foreign_futures_map.Insert(futureHandle);
+
+        unsafe {
+            (*(_UniFFILib.UniffiForeignFutureDroppedCallbackStruct*)@uniffiOutDroppedCallback).handle = foreignHandle;
+            (*(_UniFFILib.UniffiForeignFutureDroppedCallbackStruct*)@uniffiOutDroppedCallback).free = Marshal.GetFunctionPointerForDelegate(_UniFFIAsync.UniffiForeignFutureDroppedCallbackImpl.callback);
+        }
 
         Task.Run(async () => {
             var ret = new _UniFFILib.{{ meth.foreign_future_ffi_result_struct().name()|ffi_struct_name }}();
@@ -69,7 +75,7 @@ class {{ callback_impl_name }} {
                 {{ arg|lift_fn }}({{ arg.name()|var_name }}){%- if !loop.last %}, {% endif -%}
                 {%- endfor %})
             #if NET6_0_OR_GREATER
-                .WaitAsync(cts.Token)
+                .WaitAsync(futureHandle.Cts.Token)
             #endif
                 ;
 
@@ -82,20 +88,16 @@ class {{ callback_impl_name }} {
             {%- endmatch %}
 
             ret.@callStatus.code = UniffiCallbackResponseStatus.SUCCESS;
+            } catch (System.OperationCanceledException) when (futureHandle.Cts.IsCancellationRequested) {
+                // Future was dropped by Rust; do not invoke the completion callback.
+                return;
             {%- match meth.throws_type() %}
             {%- when Some with (error_type) %}
             } catch ({{ error_type|type_name(ci) }} e) {
                 ret.@callStatus.code = UniffiCallbackResponseStatus.ERROR;
                 ret.@callStatus.error_buf = {{ error_type|ffi_converter_name }}.INSTANCE.Lower(e);
-            } catch (System.Exception e){
-                ret.@callStatus.code = UniffiCallbackResponseStatus.UNEXPECTED_ERROR;
-                try {
-                    ret.@callStatus.error_buf = FfiConverterString.INSTANCE.Lower(e.Message);
-                }
-                catch {
-                }
-            }
             {%- when None %}
+            {%- endmatch %}
             } catch (System.Exception e){
                 ret.@callStatus.code = UniffiCallbackResponseStatus.UNEXPECTED_ERROR;
                 try {
@@ -104,8 +106,10 @@ class {{ callback_impl_name }} {
                 catch {
                 }
             }
-            {%- endmatch %}
 
+            // Use TryInvokeCallback to hold the same lock that MarkDropped() acquires,
+            // ensuring cb() cannot be called after Rust has freed uniffiCallbackData.
+            futureHandle.TryInvokeCallback(() => {
             {% match meth.return_type() %}
             {%- when Some with (return_type) %}
             {%- let complete_fn_type = return_type|ffi_foreign_future_complete %}
@@ -114,13 +118,8 @@ class {{ callback_impl_name }} {
             var cb = Marshal.GetDelegateForFunctionPointer<_UniFFILib.UniffiForeignFutureCompleteVoid>(@uniffiFutureCallback);
             {%- endmatch %}
             cb(@uniffiCallbackData, ret);
-        }, cts.Token);
-
-        var foreignHandle = _UniFFIAsync._foreign_futures_map.Insert(cts);
-        unsafe {
-            (*(_UniFFILib.UniffiForeignFutureDroppedCallbackStruct*)@uniffiOutDroppedCallback).handle = foreignHandle;
-            (*(_UniFFILib.UniffiForeignFutureDroppedCallbackStruct*)@uniffiOutDroppedCallback).free = Marshal.GetFunctionPointerForDelegate(_UniFFIAsync.UniffiForeignFutureDroppedCallbackImpl.callback);
-        }
+            });
+        }, futureHandle.Cts.Token);
         {%- endif %}
     }
     {%- endfor %}
@@ -129,11 +128,19 @@ class {{ callback_impl_name }} {
         {{ ffi_converter_var }}.handleMap.Remove(@handle);
     }
 
+    static ulong UniffiClone(ulong @handle) {
+        if (!{{ ffi_converter_var }}.handleMap.TryGet(@handle, out var uniffiObject)) {
+            throw new InternalException($"No callback in handlemap '{@handle}'");
+        }
+        return {{ ffi_converter_var }}.handleMap.Insert(uniffiObject!);
+    }
+
     {%- for (ffi_callback, meth) in vtable_methods.iter() %}
     {%- let fn_type = format!("_UniFFILib.{}Method", callback_impl_name) %}
     static {{ fn_type }}{{ loop.index0 }} _m{{ loop.index0 }} = new {{ fn_type }}{{ loop.index0 }}({{ meth.name()|fn_name }});
     {%- endfor %}
     static _UniFFILib.UniffiCallbackInterfaceFree _callback_interface_free = new _UniFFILib.UniffiCallbackInterfaceFree(UniffiFree);
+    static _UniFFILib.UniffiCallbackInterfaceClone _callback_interface_clone = new _UniFFILib.UniffiCallbackInterfaceClone(UniffiClone);
 
     public static void Register() {
         _UniFFILib.{{ vtable|ffi_type_name }} _vtable = new _UniFFILib.{{ vtable|ffi_type_name }} {
@@ -141,6 +148,7 @@ class {{ callback_impl_name }} {
             {%- let fn_type = format!("_UniFFILib.{}Method", callback_impl_name) %}
             {{ meth.name()|var_name() }} = Marshal.GetFunctionPointerForDelegate(_m{{ loop.index0 }}),
             {%- endfor %}
+            @uniffiClone = Marshal.GetFunctionPointerForDelegate(_callback_interface_clone),
             @uniffiFree = Marshal.GetFunctionPointerForDelegate(_callback_interface_free)
         };
 

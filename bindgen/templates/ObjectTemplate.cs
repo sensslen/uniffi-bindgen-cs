@@ -137,7 +137,7 @@
 
     {%- match meth.return_type() -%}
     {%- when Some with (return_type) %}
-    {%- if meth.name() == "Message" %}
+    {%- if meth.name()|method_name(impl_name) == "Message" %}
     public new {{ return_type|type_name(ci) }} {{ meth.name()|method_name(impl_name) }}({% call cs::arg_list_decl(meth) %}) {
         return CallWithPointer(thisPtr => {{ return_type|lift_fn }}({%- call cs::to_ffi_call_with_prefix("thisPtr", meth) %}));
     }
