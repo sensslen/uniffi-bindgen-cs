@@ -1,6 +1,6 @@
 FROM mcr.microsoft.com/dotnet/sdk:9.0
 
-LABEL org.opencontainers.image.source=https://github.com/NordSecurity/uniffi-bindgen-cs
+LABEL org.opencontainers.image.source=https://github.com/sensslen/uniffi-bindgen-cs
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain=1.88
 
