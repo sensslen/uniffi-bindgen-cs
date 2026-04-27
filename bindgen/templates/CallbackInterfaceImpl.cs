@@ -50,7 +50,7 @@ class {{ callback_impl_name }} {
         if (!{{ ffi_converter_var }}.handleMap.TryGet(handle, out var uniffiObject)) {
             throw new InternalException($"No callback in handlemap '{handle}'");
         }
-        CancellationTokenSource cts = new CancellationTokenSource();
+        var futureHandle = new UniffiForeignFutureHandle();
 
         Task.Run(async () => {
             var ret = new _UniFFILib.{{ meth.foreign_future_ffi_result_struct().name()|ffi_struct_name }}();
@@ -69,7 +69,7 @@ class {{ callback_impl_name }} {
                 {{ arg|lift_fn }}({{ arg.name()|var_name }}){%- if !loop.last %}, {% endif -%}
                 {%- endfor %})
             #if NET6_0_OR_GREATER
-                .WaitAsync(cts.Token)
+                .WaitAsync(futureHandle.Cts.Token)
             #endif
                 ;
 
@@ -82,7 +82,7 @@ class {{ callback_impl_name }} {
             {%- endmatch %}
 
             ret.@callStatus.code = UniffiCallbackResponseStatus.SUCCESS;
-            } catch (System.OperationCanceledException) when (cts.IsCancellationRequested) {
+            } catch (System.OperationCanceledException) when (futureHandle.Cts.IsCancellationRequested) {
                 // Future was dropped by Rust; do not invoke the completion callback.
                 return;
             {%- match meth.throws_type() %}
@@ -101,10 +101,9 @@ class {{ callback_impl_name }} {
                 }
             }
 
-            // Guard against the race where Rust drops the future between the try/catch and the
-            // completion callback — uniffiCallbackData would be freed and calling cb would be
-            // a use-after-free.
-            if (!cts.IsCancellationRequested) {
+            // Use TryInvokeCallback to hold the same lock that MarkDropped() acquires,
+            // ensuring cb() cannot be called after Rust has freed uniffiCallbackData.
+            futureHandle.TryInvokeCallback(() => {
             {% match meth.return_type() %}
             {%- when Some with (return_type) %}
             {%- let complete_fn_type = return_type|ffi_foreign_future_complete %}
@@ -113,10 +112,10 @@ class {{ callback_impl_name }} {
             var cb = Marshal.GetDelegateForFunctionPointer<_UniFFILib.UniffiForeignFutureCompleteVoid>(@uniffiFutureCallback);
             {%- endmatch %}
             cb(@uniffiCallbackData, ret);
-            }
-        }, cts.Token);
+            });
+        }, futureHandle.Cts.Token);
 
-        var foreignHandle = _UniFFIAsync._foreign_futures_map.Insert(cts);
+        var foreignHandle = _UniFFIAsync._foreign_futures_map.Insert(futureHandle);
         unsafe {
             (*(_UniFFILib.UniffiForeignFutureDroppedCallbackStruct*)@uniffiOutDroppedCallback).handle = foreignHandle;
             (*(_UniFFILib.UniffiForeignFutureDroppedCallbackStruct*)@uniffiOutDroppedCallback).free = Marshal.GetFunctionPointerForDelegate(_UniFFIAsync.UniffiForeignFutureDroppedCallbackImpl.callback);
