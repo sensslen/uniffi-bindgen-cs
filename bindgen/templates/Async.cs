@@ -14,7 +14,7 @@ delegate void UniFfiFutureCallback(IntPtr continuationHandle, byte pollResult);
 //   • if the completion fires first → the drop callback is blocked until cb() returns,
 //     so Rust cannot free uniffiCallbackData while cb() is still running.
 internal class UniffiForeignFutureHandle {
-    internal readonly CancellationTokenSource Cts { get; } new CancellationTokenSource();
+    internal CancellationTokenSource Cts { get; } new CancellationTokenSource();
     #if NET9_0_OR_GREATER
     private readonly Lock _lock = new Lock();
     #else
